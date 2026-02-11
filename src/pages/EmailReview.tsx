@@ -20,10 +20,10 @@ export function EmailReview() {
   const [activeTab, setActiveTab] = useState<'pending' | 'approved'>('pending');
 
   const emails = activeTab === 'pending' ? pendingEmails : approvedEmails;
-  const selectedEmail = emails?.find(e => e._id === selectedEmailId);
+const selectedEmail = emails?.find((e: any) => e._id === selectedEmailId);
 
   const handleSelectEmail = (emailId: Id<'emails'>) => {
-    const email = emails?.find(e => e._id === emailId);
+    const email = emails?.find((e: any) => e._id === emailId)
     if (email) {
       setSelectedEmailId(emailId);
       setEditedSubject(email.subject);
@@ -70,7 +70,7 @@ export function EmailReview() {
     }
 
     try {
-      await sendEmails({ emailIds: approvedEmails.map(e => e._id) as any });
+      await sendEmails({ emailIds: approvedEmails.map((e: any) => e._id) as any });
       alert(`✅ Sending ${approvedEmails.length} emails`);
     } catch (error) {
       console.error('Send error:', error);
@@ -84,7 +84,7 @@ export function EmailReview() {
     if (!confirm(`Approve all ${pendingEmails.length} pending emails?`)) return;
 
     try {
-      await bulkApprove({ ids: pendingEmails.map(e => e._id) as any });
+      await bulkApprove({ ids: pendingEmails.map((e: any) => e._id) as any });
     } catch (error) {
       console.error('Bulk approve error:', error);
     }
@@ -154,7 +154,7 @@ export function EmailReview() {
             </div>
           ) : (
             <div className="p-4 space-y-2">
-              {emails.map((email) => (
+              {emails.map((email: any) => (
                 <motion.button
                   key={email._id}
                   onClick={() => handleSelectEmail(email._id)}

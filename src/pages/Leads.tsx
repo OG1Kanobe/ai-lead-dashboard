@@ -3,7 +3,7 @@ import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { motion } from 'framer-motion';
 import Papa from 'papaparse';
-import { Upload, Search, Filter, Trash2, Mail, ExternalLink, CheckSquare, Square } from 'lucide-react';
+import { Upload, Search, Trash2, Mail, ExternalLink, CheckSquare, Square } from 'lucide-react';
 
 export function Leads() {
   const leads = useQuery(api.leads.list, {});
@@ -96,7 +96,7 @@ export function Leads() {
     setSelectedLeads(newSet);
   };
 
-  const filteredLeads = leads?.filter(lead => {
+  const filteredLeads = leads?.filter((lead: any) => {
     const matchesSearch = !searchTerm || 
       lead.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       lead.email.toLowerCase().includes(searchTerm.toLowerCase());
@@ -204,7 +204,7 @@ export function Leads() {
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map((lead) => (
+            {filteredLeads.map((lead: any) => (
                 <motion.tr
                   key={lead._id}
                   initial={{ opacity: 0 }}

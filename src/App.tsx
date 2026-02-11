@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useAuthActions } from '@convex-dev/auth/react';
 import { Authenticated, Unauthenticated } from 'convex/react';
 import { SignIn } from './pages/SignIn';
 import { Dashboard } from './pages/Dashboard';
