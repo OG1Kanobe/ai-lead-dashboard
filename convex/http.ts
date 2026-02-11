@@ -1,205 +1,191 @@
 import { v } from "convex/values";
-import { action, httpAction } from "./_generated/server";
-import { internal, api } from "./_generated/api";
-import { httpRouter } from "convex/server";
+import { mutation, query, internalMutation } from "./_generated/server";
+import { auth } from "./auth";
 
-// Action: Trigger n8n to generate emails
-export const triggerEmailGeneration = action({
+// Query: Get emails with optional filters
+export const list = query({
   args: {
-    leadIds: v.array(v.id("leads")),
+    status: v.optional(v.union(
+      v.literal("pending-review"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("sent"),
+      v.literal("send-failed")
+    )),
+    leadId: v.optional(v.id("leads")),
   },
   handler: async (ctx, args) => {
-    // Get n8n webhook URL from settings
-    const setting = await ctx.runQuery(api.settings.get, { 
-      key: "n8n_webhook_generate_url" 
-    });
-    
-    if (!setting || !setting.value) {
-      throw new Error("n8n webhook URL not configured");
+    const userId = await auth.getUserId(ctx);
+    if (!userId) return null;
+
+    let emails = await ctx.db.query("emails").collect();
+
+    if (args.status) {
+      emails = emails.filter(e => e.status === args.status);
+    }
+    if (args.leadId) {
+      emails = emails.filter(e => e.leadId === args.leadId);
     }
 
-    const webhookUrl = setting.value as string;
-
-    // Get lead data
-    const leads = await Promise.all(
-      args.leadIds.map(id => ctx.runQuery(api.leads.get, { id }))
+    const emailsWithLeads = await Promise.all(
+      emails.map(async (email) => {
+        const lead = await ctx.db.get(email.leadId);
+        return { ...email, lead };
+      })
     );
 
-    const validLeads = leads.filter(lead => lead !== null);
-
-    // Prepare payload for n8n
-    const payload = {
-      webhookType: "generate_emails",
-      leads: validLeads.map(lead => ({
-        leadId: lead._id,
-        email: lead.email,
-        companyName: lead.companyName,
-        firstName: lead.firstName,
-        lastName: lead.lastName,
-        fullName: lead.fullName,
-        website: lead.website,
-        serviceType: lead.serviceType,
-        metadata: lead.metadata,
-      })),
-    };
-
-    // Call n8n webhook
-    try {
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`n8n webhook failed: ${response.statusText}`);
-      }
-
-      return { success: true, leadsProcessed: validLeads.length };
-    } catch (error) {
-      console.error("Failed to trigger n8n:", error);
-      throw error;
-    }
+    return emailsWithLeads.sort((a, b) => 
+      new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime()
+    );
   },
 });
 
-// Action: Trigger n8n to send emails
-export const triggerEmailSending = action({
+// Query: Get single email by ID
+export const get = query({
+  args: { id: v.id("emails") },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) return null;
+    
+    const email = await ctx.db.get(args.id);
+    if (!email) return null;
+
+    const lead = await ctx.db.get(email.leadId);
+    return { ...email, lead };
+  },
+});
+
+// Mutation: Update email content
+export const update = mutation({
   args: {
-    emailIds: v.array(v.id("emails")),
+    id: v.id("emails"),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Get n8n webhook URL from settings
-    const setting = await ctx.runQuery(api.settings.get, { 
-      key: "n8n_webhook_send_url" 
+    const userId = await auth.getUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const updates: any = {};
+    if (args.subject !== undefined) updates.subject = args.subject;
+    if (args.body !== undefined) updates.body = args.body;
+
+    await ctx.db.patch(args.id, updates);
+  },
+});
+
+// Mutation: Approve email
+export const approve = mutation({
+  args: { id: v.id("emails") },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const email = await ctx.db.get(args.id);
+    if (!email) throw new Error("Email not found");
+
+    await ctx.db.patch(args.id, {
+      status: "approved",
+      approvedAt: new Date().toISOString(),
     });
-    
-    if (!setting || !setting.value) {
-      throw new Error("n8n send webhook URL not configured");
-    }
 
-    const webhookUrl = setting.value as string;
-
-    // Get email data
-    const emails = await Promise.all(
-      args.emailIds.map(id => ctx.runQuery(api.emails.get, { id }))
-    );
-
-    const validEmails = emails.filter(email => 
-      email !== null && email.status === "approved"
-    );
-
-    // Get from address from settings
-    const fromSetting = await ctx.runQuery(api.settings.get, { 
-      key: "from_email_address" 
+    await ctx.db.patch(email.leadId, {
+      status: "approved",
     });
-    const fromAddress = fromSetting?.value || "you@agency.com";
+  },
+});
 
-    // Prepare payload for n8n
-    const payload = {
-      webhookType: "send_emails",
-      emails: validEmails.map(email => ({
-        emailId: email._id,
-        leadId: email.leadId,
-        to: email.lead.email,
-        toName: email.lead.fullName || email.lead.firstName,
-        subject: email.subject,
-        body: email.body,
-        fromAddress,
-        provider: "gmail", // Default to gmail for now
-      })),
-    };
+// Mutation: Reject email
+export const reject = mutation({
+  args: { id: v.id("emails") },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
 
-    // Call n8n webhook
-    try {
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+    await ctx.db.patch(args.id, {
+      status: "rejected",
+    });
+  },
+});
+
+// Mutation: Bulk approve
+export const bulkApprove = mutation({
+  args: { ids: v.array(v.id("emails")) },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    for (const id of args.ids) {
+      const email = await ctx.db.get(id);
+      if (!email) continue;
+
+      await ctx.db.patch(id, {
+        status: "approved",
+        approvedAt: new Date().toISOString(),
       });
 
-      if (!response.ok) {
-        throw new Error(`n8n webhook failed: ${response.statusText}`);
-      }
-
-      return { success: true, emailsSent: validEmails.length };
-    } catch (error) {
-      console.error("Failed to trigger email sending:", error);
-      throw error;
+      await ctx.db.patch(email.leadId, {
+        status: "approved",
+      });
     }
   },
 });
 
-// HTTP Router for incoming n8n webhooks
-const http = httpRouter();
+// INTERNAL MUTATIONS (called by webhooks)
+export const createInternal = internalMutation({
+  args: {
+    leadId: v.id("leads"),
+    subject: v.string(),
+    body: v.string(),
+    metadata: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const emailId = await ctx.db.insert("emails", {
+      leadId: args.leadId,
+      subject: args.subject,
+      body: args.body,
+      status: "pending-review",
+      generatedAt: new Date().toISOString(),
+      metadata: args.metadata,
+    });
 
-// Webhook: Receive email generation results from n8n
-http.route({
-  path: "/webhook/email-generated",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const body = await request.json();
+    await ctx.db.patch(args.leadId, {
+      status: "email-generated",
+    });
 
-    try {
-      // Validate payload
-      if (!body.leadId || !body.subject || !body.body) {
-        return new Response("Invalid payload", { status: 400 });
-      }
-
-      // Create email record
-      await ctx.runMutation(internal.emails.create, {
-        leadId: body.leadId,
-        subject: body.subject,
-        body: body.body,
-        metadata: body.metadata,
-      });
-
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      console.error("Webhook error:", error);
-      return new Response(JSON.stringify({ error: String(error) }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }),
+    return emailId;
+  },
 });
 
-// Webhook: Receive email sent confirmation from n8n
-http.route({
-  path: "/webhook/email-sent",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const body = await request.json();
+export const markSentInternal = internalMutation({
+  args: {
+    id: v.id("emails"),
+    messageId: v.string(),
+    provider: v.union(v.literal("gmail"), v.literal("outlook")),
+  },
+  handler: async (ctx, args) => {
+    const email = await ctx.db.get(args.id);
+    if (!email) throw new Error("Email not found");
 
-    try {
-      // Validate payload
-      if (!body.emailId || !body.messageId || !body.provider) {
-        return new Response("Invalid payload", { status: 400 });
-      }
+    await ctx.db.patch(args.id, {
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      messageId: args.messageId,
+      provider: args.provider,
+    });
 
-      // Mark email as sent
-      await ctx.runMutation(internal.emails.markSent, {
-        id: body.emailId,
-        messageId: body.messageId,
-        provider: body.provider,
-      });
+    await ctx.db.patch(email.leadId, {
+      status: "sent",
+      lastContactedAt: new Date().toISOString(),
+    });
 
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      console.error("Webhook error:", error);
-      return new Response(JSON.stringify({ error: String(error) }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }),
+    await ctx.db.insert("emailTracking", {
+      emailId: args.id,
+      leadId: email.leadId,
+      messageId: args.messageId,
+      opened: false,
+      replied: false,
+      clicks: 0,
+    });
+  },
 });
-
-export default http;

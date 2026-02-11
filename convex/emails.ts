@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-
+import { internalMutation } from "./_generated/server";
 // Query: Get emails with optional filters
 export const list = query({
   args: {
@@ -58,8 +58,7 @@ export const get = query({
   },
 });
 
-// Mutation: Create email (called by n8n webhook)
-export const create = mutation({
+export const createInternal = internalMutation({
   args: {
     leadId: v.id("leads"),
     subject: v.string(),
@@ -76,7 +75,6 @@ export const create = mutation({
       metadata: args.metadata,
     });
 
-    // Update lead status
     await ctx.db.patch(args.leadId, {
       status: "email-generated",
     });
@@ -197,3 +195,5 @@ export const bulkApprove = mutation({
     }
   },
 });
+
+
